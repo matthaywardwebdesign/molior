@@ -216,6 +216,9 @@ function buildProject(data, callback, socket){
                         warningData['info'] = line.split("warning: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var warningFile = line.split("warning: ")[0].split(":")[0].split(data.project)[1];
                         var warningInfo = line.split("warning: ")[1].split("[").join("*");
+                        var warningLine = line.split("warning: ")[0].split(":");
+                        warningLine = warningLine[warningLine.length - 3];
+                        warningData['line'] = warningLine;
                         socket.emit("filewarning", {"file": warningFile, "warning": warningData});
                     }
                     
@@ -252,6 +255,9 @@ function buildProject(data, callback, socket){
                         noteData['info'] = line.split("note: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var noteFile = line.split("note: ")[0].split(":")[0].split(data.project)[1];
                         var noteInfo = line.split("note: ")[1].split("[").join("*");
+                        var noteLine = line.split("note: ")[0].split(":");
+                        noteLine = noteLine[noteLine.length - 3];
+                        noteData['line'] = noteLine;
                         socket.emit("filenote", {"file": noteFile, "note": noteData});
                     }
                     
@@ -288,6 +294,9 @@ function buildProject(data, callback, socket){
                         errorData['info'] = line.split("error: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var errorFile = line.split("error: ")[0].split(":")[0].split(data.project)[1];
                         var errorInfo = line.split("error: ")[1].split("[").join("*");
+                        var errorLine = line.split("error: ")[0].split(":");
+                        errorLine = errorLine[errorLine.length - 3];
+                        errorData['line'] = errorLine;
                         socket.emit("fileerror", {"file": errorFile, "error": errorData});
                     }
                     
