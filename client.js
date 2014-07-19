@@ -254,5 +254,8 @@ http.createServer(function (request, response) {
     if (filename == "/status") {
         response.write(JSON.stringify(buildStatus));
     }
+      if (filename == "/status/basic") {
+        response.write(JSON.stringify({state: buildStatus['state'],last_build_result: buildStatus['last_build_result'], last_build_time: buildStatus['last_build_time']}));
+    }
     response.end();
 }).listen(8080);
