@@ -7,6 +7,7 @@ var server = http.Server();
 var io = require('socket.io')(server);
 var fs = require("graceful-fs");
 var path = require("path");
+var url = require("url");
 var ensureDir = require("ensureDir");
 var crypto = require("crypto");
 var walk = require("walk");
@@ -33,6 +34,11 @@ io.on('connection', function(socket){
        buildProject(data, function (result){
             socket.emit('buildresult', {'result': result});   
        },socket); 
+    });
+    socket.on('deploy', function (data){
+        deployProject(data, function(){
+            
+        }, socket);
     });
     socket.on('disconnect', function(){});
 });
@@ -146,6 +152,43 @@ function checkFiles(data){
     walker.on('end', function() {
         console.log("Remote sync complete");
     });
+}
+
+function deployProject(data,callback,socket){
+    console.log("Deploying....");
+    //Build project
+    buildProject(data, function(result){
+        if (result == "Build Passed"){
+            var path = "projects/" + data.project + "/" + data.builddir; 
+            //Fix windows path issue
+            path = path.split("\\").join("/");
+            exec("cd " + path + ";xcodebuild archive -archivePath /tmp/" + data.project + ".xcarchive -scheme '" + data.scheme + "'  > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
+                        //Project build done, lets make ipa
+                         exec("cd " + path + ";xcodebuild -exportArchive -exportFormat ipa -exportPath '" + process.cwd() + "/projects/" + data.project.split("=").join("-") + ".ipa' -archivePath /tmp/" + data.project + ".xcarchive  > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
+                        //IPA exported, lets create manifest
+                            fs.readFile(process.cwd() + "/manifest.template",function (err,fileData){
+                                var manifestData = fileData.toString();
+                                console.log(err);
+                                //Replace manifest vars with project data
+                                manifestData = manifestData.split("$FILE$").join("http://" + ip.address() + ":8080/" + data.project.split("=").join("-") + ".ipa");
+                                manifestData = manifestData.split("$BUNDLEID$").join(data.bundleid);
+                                //Write manifest to file
+                                fs.writeFile(process.cwd() + "/projects/" + data.project.split("=").join("-") + ".plist", manifestData, function (err){
+                                   if (!err){
+                                    //Manifest written, tell ipad to load install link
+                                    io.sockets.emit('ipad_deploy', {});
+                                    //Tell client we are done
+                                    socket.emit('deploydone', {});
+                                    console.log("Deploy done");
+                                   }
+                                });
+                            });
+                       
+            });
+                
+            });
+        }
+    }, socket);
 }
 
 function buildProject(data, callback, socket){
@@ -291,6 +334,7 @@ function buildProject(data, callback, socket){
                     
                     if (errorType == "code"){
                         errorData['type'] = "code";
+                        if (line.split("error: ")[1] != null){
                         errorData['info'] = line.split("error: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var errorFile = line.split("error: ")[0].split(":")[0].split(data.project)[1];
                         var errorInfo = line.split("error: ")[1].split("[").join("*");
@@ -298,6 +342,7 @@ function buildProject(data, callback, socket){
                         errorLine = errorLine[errorLine.length - 3];
                         errorData['line'] = errorLine;
                         socket.emit("fileerror", {"file": errorFile, "error": errorData});
+                        }
                     }
                     
                 }
@@ -307,3 +352,32 @@ function buildProject(data, callback, socket){
         
     });
 };
+
+//Create HTTP file server for serving up manifest and ipa
+http.createServer(function(request, response) {
+ 
+  var uri = url.parse(request.url).pathname
+    , filename = path.join(process.cwd() + "/projects", uri);
+  
+  path.exists(filename, function(exists) {
+    if(!exists) {
+      response.writeHead(404, {"Content-Type": "text/plain"});
+      response.write("404 Not Found\n");
+      response.end();
+      return;
+    }
+ 
+    fs.readFile(filename, "binary", function(err, file) {
+      if(err) {        
+        response.writeHead(500, {"Content-Type": "text/plain"});
+        response.write(err + "\n");
+        response.end();
+        return;
+      }
+ 
+      response.writeHead(200);
+      response.write(file, "binary");
+      response.end();
+    });
+  });
+}).listen(8080);
