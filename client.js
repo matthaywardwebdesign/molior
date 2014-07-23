@@ -1,7 +1,11 @@
 //Retrieve command line arguments and store in variables
-var WORKING_DIRECTORY = process.argv[2];
-var SERVER = process.argv[3];
-var BUILD_DIRECTORY = process.argv[4] || "/";
+var config = require("./" + process.argv[2]);
+var WORKING_DIRECTORY = config.working_directory;
+var SERVER = config.server;
+var BUILD_DIRECTORY = config.build_directory || "/";
+var BUILD_SCHEME = config.build_scheme;
+var BUNDLE_ID = config.bundle_id;
+var APP_NAME = config.appname;
 console.log("Build directory: " + BUILD_DIRECTORY);
 //Include modules
 var io = require('socket.io-client');
@@ -27,11 +31,14 @@ buildStatus['build_warnings'] = {};
 buildStatus['build_notes'] = {};
 buildStatus['build_errors'] = {};
 
+//Load the deploy template
+var DEPLOY_TEMPLATE = fs.readFileSync("deploy.html");
+
 //Change the working directory to the specified directory
 process.chdir(WORKING_DIRECTORY);
 
 //Connect to server
-var socket = io.connect('http://' + SERVER, {
+var socket = io.connect('http://' + SERVER + ":2633", {
     'reconnection delay': 100,
     'reconnection limit': 100,
     'max reconnection attempts': Infinity
@@ -46,9 +53,9 @@ socket.on('connect', function () {
     });
     socket.on('filecompile', function (data) {
         buildStatus['files_compiled'].push(data.file);
-        buildStatus['build_warnings'][data.file] = [];
-        buildStatus['build_notes'][data.file] = [];
-        buildStatus['build_errors'][data.file] = [];
+        buildStatus['build_warnings']["/" + path.normalize(BUILD_DIRECTORY + "/").split("\\").join("/") + data.file] = [];
+        buildStatus['build_notes']["/" + path.normalize(BUILD_DIRECTORY + "/").split("\\").join("/") + data.file] = [];
+        buildStatus['build_errors']["/" + path.normalize(BUILD_DIRECTORY + "/").split("\\").join("/") + data.file] = [];
     });
     socket.on('filewarning', function (data) {
         if (buildStatus['build_warnings'][data.file] == 'undefined' || buildStatus['build_warnings'][data.file] == null) {
@@ -73,6 +80,10 @@ socket.on('connect', function () {
         } else {
             buildStatus['build_errors'][data.file].push(data.error);
         }
+    });
+    socket.on('deploydone', function(data){
+        console.log("Deploy done"); 
+        buildStatus['state'] = "idle";
     });
     socket.on('disconnect', function () {
         buildStatus['state'] = "waiting for connection";
@@ -244,18 +255,44 @@ http.createServer(function (request, response) {
         //Tell server to do a build
         socket.emit('build', {
             'project': PROJECT,
-            'builddir': BUILD_DIRECTORY
+            'builddir': BUILD_DIRECTORY,
+            'scheme': BUILD_SCHEME
         });
         console.log("Building.....");
         buildStatus['state'] = 'building';
         buildStatus['files_compiled'] = [];
         buildStatus['last_build_time'] = (new Date).getTime();
     }
+    
+    if (filename == "/deploy") {
+        //Tell the server to build and deploy
+        socket.emit('deploy', {
+            'project': PROJECT,
+            'builddir': BUILD_DIRECTORY,
+            'scheme': BUILD_SCHEME,
+            'bundleid': BUNDLE_ID,
+            'appname': APP_NAME
+        });
+        console.log("Deploying.....");
+        buildStatus['state'] = 'deploying';
+        buildStatus['files_compiled'] = [];
+        buildStatus['last_build_time'] = (new Date).getTime();
+        
+    }
+    
     if (filename == "/status") {
         response.write(JSON.stringify(buildStatus));
     }
+    
+    if (filename == "/ipad"){
+            var deployTemplate = DEPLOY_TEMPLATE.toString();
+            deployTemplate = deployTemplate.split("$SERVER$").join(SERVER);
+            deployTemplate = deployTemplate.split("$PROJECT$").join(PROJECT.split("=").join("-"));
+            response.write(deployTemplate);
+    }
+    
       if (filename == "/status/basic") {
-        response.write(JSON.stringify({state: buildStatus['state'],last_build_result: buildStatus['last_build_result'], last_build_time: buildStatus['last_build_time']}));
+        response.write(JSON.stringify({state: buildStatus['state'],last_build_result: buildStatus['last_build_result'], last_build_time: buildStatus['last_build_time'], project_path: path.normalize(WORKING_DIRECTORY + "/").split("\\").join("/")}));
     }
     response.end();
 }).listen(8080);
