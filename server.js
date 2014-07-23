@@ -12,6 +12,7 @@ var ensureDir = require("ensureDir");
 var crypto = require("crypto");
 var walk = require("walk");
 var ip = require("ip");
+var os = require("os");
 var exec = require("child_process").exec;
 
 //Create projects directory
@@ -159,34 +160,24 @@ function deployProject(data,callback,socket){
     //Build project
     buildProject(data, function(result){
         if (result == "Build Passed"){
-            var path = "projects/" + data.project + "/" + data.builddir; 
-            //Fix windows path issue
-            path = path.split("\\").join("/");
-            exec("cd " + path + ";xcodebuild archive -archivePath /tmp/" + data.project + ".xcarchive -scheme '" + data.scheme + "'  > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
-                        //Project build done, lets make ipa
-                         exec("cd " + path + ";xcodebuild -exportArchive -exportFormat ipa -exportPath '" + process.cwd() + "/projects/" + data.project.split("=").join("-") + ".ipa' -archivePath /tmp/" + data.project + ".xcarchive  > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
-                        //IPA exported, lets create manifest
-                            fs.readFile(process.cwd() + "/manifest.template",function (err,fileData){
-                                var manifestData = fileData.toString();
-                                console.log(err);
-                                //Replace manifest vars with project data
-                                manifestData = manifestData.split("$FILE$").join("http://" + ip.address() + ":8080/" + data.project.split("=").join("-") + ".ipa");
-                                manifestData = manifestData.split("$BUNDLEID$").join(data.bundleid);
-                                //Write manifest to file
-                                fs.writeFile(process.cwd() + "/projects/" + data.project.split("=").join("-") + ".plist", manifestData, function (err){
-                                   if (!err){
-                                    //Manifest written, tell ipad to load install link
-                                    io.sockets.emit('ipad_deploy', {});
-                                    //Tell client we are done
-                                    socket.emit('deploydone', {});
-                                    console.log("Deploy done");
-                                   }
-                                });
-                            });
-                       
+            //Uninstall old version
+            exec("ideviceinstaller --uninstall '" + data.bundleid + "'", function (error, stdout, stderr){
+                    console.log(error);
+                console.log(stdout);
+                console.log(stderr);
+                
+                 //Build passed run deployment command
+            exec("ideviceinstaller --install '" + process.cwd() + "/projects/" + data.appname + ".app'", function (error, stdout, stderr){
+                console.log(error);
+                console.log(stdout);
+                console.log(stderr);
+                socket.emit('deploydone', {});
+                console.log("Deploy done");   
             });
                 
             });
+           
+             
         }
     }, socket);
 }
@@ -197,7 +188,7 @@ function buildProject(data, callback, socket){
     var path = "projects/" + data.project + "/" + data.builddir; 
     //Fix windows path issue
     path = path.split("\\").join("/");
-    exec("cd " + path + ";xcodebuild > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
+    exec("cd " + path + ";xcodebuild -scheme '" + data.scheme + "' -sdk iphoneos build CONFIGURATION_BUILD_DIR='" + process.cwd() + "/projects/'> " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
         //Build complete - find result from log file
         fs.readFile(process.cwd() + "/projects/" + data.project + ".buildlog", function (err, filedata) {
             if (filedata.toString().indexOf("** BUILD SUCCEEDED **") > -1){
@@ -353,31 +344,4 @@ function buildProject(data, callback, socket){
     });
 };
 
-//Create HTTP file server for serving up manifest and ipa
-http.createServer(function(request, response) {
- 
-  var uri = url.parse(request.url).pathname
-    , filename = path.join(process.cwd() + "/projects", uri);
-  
-  path.exists(filename, function(exists) {
-    if(!exists) {
-      response.writeHead(404, {"Content-Type": "text/plain"});
-      response.write("404 Not Found\n");
-      response.end();
-      return;
-    }
- 
-    fs.readFile(filename, "binary", function(err, file) {
-      if(err) {        
-        response.writeHead(500, {"Content-Type": "text/plain"});
-        response.write(err + "\n");
-        response.end();
-        return;
-      }
- 
-      response.writeHead(200);
-      response.write(file, "binary");
-      response.end();
-    });
-  });
-}).listen(8080);
+
