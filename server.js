@@ -7,10 +7,12 @@ var server = http.Server();
 var io = require('socket.io')(server);
 var fs = require("graceful-fs");
 var path = require("path");
+var url = require("url");
 var ensureDir = require("ensureDir");
 var crypto = require("crypto");
 var walk = require("walk");
 var ip = require("ip");
+var os = require("os");
 var exec = require("child_process").exec;
 
 //Create projects directory
@@ -33,6 +35,11 @@ io.on('connection', function(socket){
        buildProject(data, function (result){
             socket.emit('buildresult', {'result': result});   
        },socket); 
+    });
+    socket.on('deploy', function (data){
+        deployProject(data, function(){
+            
+        }, socket);
     });
     socket.on('disconnect', function(){});
 });
@@ -148,13 +155,40 @@ function checkFiles(data){
     });
 }
 
+function deployProject(data,callback,socket){
+    console.log("Deploying....");
+    //Build project
+    buildProject(data, function(result){
+        if (result == "Build Passed"){
+            //Uninstall old version
+            exec("ideviceinstaller --uninstall '" + data.bundleid + "'", function (error, stdout, stderr){
+                    console.log(error);
+                console.log(stdout);
+                console.log(stderr);
+                
+                 //Build passed run deployment command
+            exec("ideviceinstaller --install '" + process.cwd() + "/projects/" + data.appname + ".app'", function (error, stdout, stderr){
+                console.log(error);
+                console.log(stdout);
+                console.log(stderr);
+                socket.emit('deploydone', {});
+                console.log("Deploy done");   
+            });
+                
+            });
+           
+             
+        }
+    }, socket);
+}
+
 function buildProject(data, callback, socket){
     var done = false;
     console.log("Building.....");
     var path = "projects/" + data.project + "/" + data.builddir; 
     //Fix windows path issue
     path = path.split("\\").join("/");
-    exec("cd " + path + ";xcodebuild > " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
+    exec("cd " + path + ";xcodebuild -scheme '" + data.scheme + "' -sdk iphoneos build CONFIGURATION_BUILD_DIR='" + process.cwd() + "/projects/'> " + process.cwd() + "/projects/" + data.project + ".buildlog 2>&1", function (error, stdout, stderr){
         //Build complete - find result from log file
         fs.readFile(process.cwd() + "/projects/" + data.project + ".buildlog", function (err, filedata) {
             if (filedata.toString().indexOf("** BUILD SUCCEEDED **") > -1){
@@ -216,6 +250,9 @@ function buildProject(data, callback, socket){
                         warningData['info'] = line.split("warning: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var warningFile = line.split("warning: ")[0].split(":")[0].split(data.project)[1];
                         var warningInfo = line.split("warning: ")[1].split("[").join("*");
+                        var warningLine = line.split("warning: ")[0].split(":");
+                        warningLine = warningLine[warningLine.length - 3];
+                        warningData['line'] = warningLine;
                         socket.emit("filewarning", {"file": warningFile, "warning": warningData});
                     }
                     
@@ -252,6 +289,9 @@ function buildProject(data, callback, socket){
                         noteData['info'] = line.split("note: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var noteFile = line.split("note: ")[0].split(":")[0].split(data.project)[1];
                         var noteInfo = line.split("note: ")[1].split("[").join("*");
+                        var noteLine = line.split("note: ")[0].split(":");
+                        noteLine = noteLine[noteLine.length - 3];
+                        noteData['line'] = noteLine;
                         socket.emit("filenote", {"file": noteFile, "note": noteData});
                     }
                     
@@ -285,10 +325,15 @@ function buildProject(data, callback, socket){
                     
                     if (errorType == "code"){
                         errorData['type'] = "code";
+                        if (line.split("error: ")[1] != null){
                         errorData['info'] = line.split("error: ")[1].split("[").join(" ").split(":").join("-").split("]").join("").split("\'").join("");
                         var errorFile = line.split("error: ")[0].split(":")[0].split(data.project)[1];
                         var errorInfo = line.split("error: ")[1].split("[").join("*");
+                        var errorLine = line.split("error: ")[0].split(":");
+                        errorLine = errorLine[errorLine.length - 3];
+                        errorData['line'] = errorLine;
                         socket.emit("fileerror", {"file": errorFile, "error": errorData});
+                        }
                     }
                     
                 }
@@ -298,3 +343,5 @@ function buildProject(data, callback, socket){
         
     });
 };
+
+
